@@ -224,8 +224,9 @@ class Runner:
         :param params: A hash with all the respective runner's parameters.
         :return: A tuple of the specific runner's params, request level parameters, transport level parameters, and headers, respectively.
         """
+        params = dict(params)
         transport_params = {}
-        request_params = params.get("request-params", {})
+        request_params = dict(params.get("request-params", {}))
 
         if request_timeout := params.pop("request-timeout", None):
             transport_params["request_timeout"] = request_timeout
@@ -233,7 +234,7 @@ class Runner:
         if (ignore_status := request_params.pop("ignore", None)) or (ignore_status := params.pop("ignore", None)):
             transport_params["ignore_status"] = ignore_status
 
-        headers = params.pop("headers", None) or {}
+        headers = dict(params.pop("headers", None) or {})
         if opaque_id := params.pop("opaque-id", None):
             headers.update({"x-opaque-id": opaque_id})
 

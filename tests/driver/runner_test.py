@@ -203,6 +203,41 @@ class TestRegisterRunner:
         assert await returned_runner(all_clients, "some_param") == (all_clients, "some_param")
 
 
+class TestTransportRequestParams:
+    # pylint: disable=protected-access
+    def test_does_not_mutate_params(self):
+        params = {
+            "index": "test",
+            "request-timeout": 3600,
+            "headers": {"header1": "value1"},
+            "opaque-id": "test-id1",
+            "request-params": {"ignore": [404], "wait_for_completion": "true"},
+        }
+        original_params = copy.deepcopy(params)
+
+        for _ in range(2):
+            actual_params, request_params, transport_params, headers = runner.Runner._transport_request_params(params)
+
+            assert actual_params == {"index": "test", "request-params": {"ignore": [404], "wait_for_completion": "true"}}
+            assert request_params == {"wait_for_completion": "true"}
+            assert transport_params == {"request_timeout": 3600, "ignore_status": [404]}
+            assert headers == {"header1": "value1", "x-opaque-id": "test-id1"}
+            assert params == original_params
+
+    def test_does_not_mutate_params_with_top_level_ignore(self):
+        params = {"index": "test", "ignore": [400, 404]}
+        original_params = copy.deepcopy(params)
+
+        for _ in range(2):
+            actual_params, request_params, transport_params, headers = runner.Runner._transport_request_params(params)
+
+            assert actual_params == {"index": "test"}
+            assert request_params == {}
+            assert transport_params == {"ignore_status": [400, 404]}
+            assert headers == {}
+            assert params == original_params
+
+
 class TestAssertingRunner:
     def setup_method(self, method):
         runner.enable_assertions(True)
@@ -8929,6 +8964,38 @@ class TestEsqlProfileRunner:
         assert result["node_reduction.logical_optimization.took_ms"] == 1.0
         assert result["node_reduction.physical_optimization.took_ms"] == 2.0
         assert result["node_reduction.reduction.took_ms"] == 0.5
+
+    @mock.patch("elasticsearch.Elasticsearch")
+    @pytest.mark.asyncio
+    async def test_esql_profile_reuses_params_across_calls(self, es):
+        es.options.return_value = es
+        es.perform_request = mock.AsyncMock(return_value={"profile": {}})
+        esql_profile = runner.EsqlProfile()
+        params = {
+            "query": "from logs-* | limit 10",
+            "request-timeout": 3600,
+            "headers": {"header1": "value1"},
+            "opaque-id": "test-id1",
+            "request-params": {"ignore": [404], "drop_null_columns": "true"},
+        }
+        original_params = copy.deepcopy(params)
+
+        await esql_profile(es, params=params)
+        await esql_profile(es, params=params)
+
+        assert es.options.call_args_list == [
+            mock.call(request_timeout=3600, ignore_status=[404]),
+            mock.call(request_timeout=3600, ignore_status=[404]),
+        ]
+        expected_call = mock.call(
+            method="POST",
+            path="/_query",
+            headers={"header1": "value1", "x-opaque-id": "test-id1"},
+            body={"query": "from logs-* | limit 10", "profile": True},
+            params={"drop_null_columns": "true"},
+        )
+        assert es.perform_request.await_args_list == [expected_call, expected_call]
+        assert params == original_params
 
 
 class TestEnrichPolicy:
